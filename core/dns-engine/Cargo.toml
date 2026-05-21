@@ -15,3 +15,5 @@ bytes = { workspace = true }
 parking_lot = { workspace = true }
 freeix-filtering-engine = { path = "../filtering-engine" }
 freeix-cache = { path = "../cache" }
+reqwest = { workspace = true }
+serde = { workspace = true }

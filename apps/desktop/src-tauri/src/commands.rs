@@ -1,12 +1,13 @@
 use crate::state::{AppConfig, AppState, DnsProvider, QueryEvent, QueryStatus};
+use std::process::Command as StdCommand;
 use freeix_blocklists::BlocklistManager;
 use freeix_dns_engine::upstream::{UpstreamConfig, UpstreamEntry, UpstreamProtocol, UpstreamProvider};
-use freeix_dns_engine::DnsServerConfig;
-use freeix_dns_engine::DnsServer;
+use freeix_dns_engine::{DnsServer, DnsServerConfig, QueryCallback, QueryInfo};
 use freeix_filtering_engine::{FilterEngine, Rule, RuleType2};
 use freeix_platform::{get_dns_manager, DnsBackup};
 use serde::Serialize;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use std::time::Instant;
 use tauri::{AppHandle, Emitter, State};
 
@@ -57,11 +58,13 @@ pub async fn toggle_protection(
                 address: format!("{}:53", provider.primary).parse().map_err(|e| format!("{}", e))?,
                 protocol: UpstreamProtocol::Plain,
                 hostname: None,
+                doh_url: None,
             },
             UpstreamEntry {
                 address: format!("{}:53", provider.secondary).parse().map_err(|e| format!("{}", e))?,
                 protocol: UpstreamProtocol::Plain,
                 hostname: None,
+                doh_url: None,
             },
         ];
 
@@ -80,7 +83,46 @@ pub async fn toggle_protection(
             ..Default::default()
         };
 
-        let dns_server = Arc::new(DnsServer::new(server_config, state.filter_engine.clone()));
+        // Build query callback for real-time events
+        let state_ref = state.inner().clone();
+        let app_handle = app.clone();
+        let callback: QueryCallback = Arc::new(move |info: QueryInfo| {
+            // Increment stats
+            state_ref.stats.total_queries.fetch_add(1, Ordering::Relaxed);
+            if info.blocked {
+                state_ref.stats.blocked_queries.fetch_add(1, Ordering::Relaxed);
+            }
+            if info.cached {
+                state_ref.stats.cache_hits.fetch_add(1, Ordering::Relaxed);
+            }
+
+            // Push to query log
+            let status = if info.blocked {
+                QueryStatus::Blocked
+            } else if info.cached {
+                QueryStatus::Cached
+            } else {
+                QueryStatus::Allowed
+            };
+            let event = QueryEvent {
+                timestamp: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs(),
+                domain: info.domain.clone(),
+                query_type: info.query_type.clone(),
+                status,
+                response_time_ms: info.response_time_ms,
+                upstream: String::new(),
+                rule: info.rule.clone(),
+            };
+            state_ref.push_log(event.clone());
+
+            // Emit Tauri event
+            let _ = app_handle.emit("query-event", &event);
+        });
+
+        let dns_server = Arc::new(DnsServer::new(server_config, state.filter_engine.clone(), Some(callback)));
         dns_server.start().await.map_err(|e| format!("Failed to start DNS server: {}", e))?;
 
         // Backup current DNS and redirect to our local proxy
@@ -168,7 +210,8 @@ pub async fn update_config(
     config: AppConfig,
     state: State<'_, AppStateHandle>,
 ) -> Result<(), String> {
-    *state.config.write() = config;
+    *state.config.write() = config.clone();
+    AppState::save_config(&config);
     tracing::info!("Configuration updated");
     Ok(())
 }
@@ -319,5 +362,57 @@ pub async fn update_blocklists(state: State<'_, AppStateHandle>) -> Result<Strin
     let msg = format!("Loaded {} blocking rules from {} lists", total_rules, default_lists.len());
     tracing::info!("{}", msg);
     Ok(msg)
+}
+
+#[tauri::command]
+pub async fn set_autostart(enable: bool) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        use std::process::Command;
+        let exe_path = std::env::current_exe().map_err(|e| e.to_string())?;
+        let exe_str = exe_path.to_string_lossy().to_string();
+        if enable {
+            Command::new("reg")
+                .args(&[
+                    "add",
+                    r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run",
+                    "/v", "FreeIX",
+                    "/t", "REG_SZ",
+                    "/d", &exe_str,
+                    "/f",
+                ])
+                .output()
+                .map_err(|e| e.to_string())?;
+        } else {
+            Command::new("reg")
+                .args(&[
+                    "delete",
+                    r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run",
+                    "/v", "FreeIX",
+                    "/f",
+                ])
+                .output()
+                .map_err(|e| e.to_string())?;
+        }
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn get_autostart() -> Result<bool, String> {
+    #[cfg(target_os = "windows")]
+    {
+        let output = std::process::Command::new("reg")
+            .args(&[
+                "query",
+                r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run",
+                "/v", "FreeIX",
+            ])
+            .output()
+            .map_err(|e| e.to_string())?;
+        return Ok(output.status.success());
+    }
+    #[cfg(not(target_os = "windows"))]
+    Ok(false)
 }
 

@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use tauri::{Manager, menu::{Menu, MenuItem}, tray::TrayIconBuilder, image::Image};
 use tracing_subscriber::EnvFilter;
 
 mod commands;
@@ -41,8 +42,35 @@ pub fn run() {
             get_top_blocked,
             update_blocklists,
         ])
-        .setup(move |_app| {
-            tracing::info!("FreeIX initialized successfully");
+        .setup(move |app| {
+            // Create tray menu
+            let quit = MenuItem::with_id(app, "quit", "Quit FreeIX", true, None::<&str>)?;
+            let show = MenuItem::with_id(app, "show", "Show Window", true, None::<&str>)?;
+            let menu = Menu::with_items(app, &[&show, &quit])?;
+
+            // Build tray icon
+            let icon = app.default_window_icon().cloned().unwrap_or_else(|| Image::new_owned(vec![0; 32*32*4], 32, 32));
+            let _tray = TrayIconBuilder::new()
+                .icon(icon)
+                .menu(&menu)
+                .tooltip("FreeIX - DNS Ad Blocker")
+                .on_menu_event(|app, event| {
+                    match event.id.as_ref() {
+                        "quit" => {
+                            app.exit(0);
+                        }
+                        "show" => {
+                            if let Some(window) = app.get_webview_window("main") {
+                                let _ = window.show();
+                                let _ = window.set_focus();
+                            }
+                        }
+                        _ => {}
+                    }
+                })
+                .build(app)?;
+
+            tracing::info!("FreeIX initialized with system tray");
             Ok(())
         })
         .run(tauri::generate_context!())

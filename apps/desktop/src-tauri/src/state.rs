@@ -114,6 +114,35 @@ pub struct AppState {
 }
 
 impl AppState {
+    pub fn config_path() -> std::path::PathBuf {
+        directories::ProjectDirs::from("com", "freeix", "FreeIX")
+            .map(|d| d.config_dir().to_path_buf())
+            .unwrap_or_else(|| std::path::PathBuf::from("."))
+            .join("config.toml")
+    }
+
+    pub fn load_config() -> AppConfig {
+        let path = Self::config_path();
+        if path.exists() {
+            if let Ok(content) = std::fs::read_to_string(&path) {
+                if let Ok(config) = toml::from_str(&content) {
+                    return config;
+                }
+            }
+        }
+        AppConfig::default()
+    }
+
+    pub fn save_config(config: &AppConfig) {
+        let path = Self::config_path();
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        if let Ok(content) = toml::to_string_pretty(config) {
+            let _ = std::fs::write(&path, content);
+        }
+    }
+
     pub fn new() -> Self {
         let dns_providers = vec![
             DnsProvider {
@@ -157,7 +186,7 @@ impl AppState {
 
         Self {
             protection_enabled: RwLock::new(false),
-            config: RwLock::new(AppConfig::default()),
+            config: RwLock::new(Self::load_config()),
             stats: Arc::new(LiveStats::new()),
             whitelist: RwLock::new(HashSet::new()),
             blacklist: RwLock::new(HashSet::new()),

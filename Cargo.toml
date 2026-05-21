@@ -60,5 +60,5 @@ chrono = { version = "0.4", features = ["serde"] }
 directories = "5"
 
 # Tauri
-tauri = { version = "2", features = [] }
+tauri = { version = "2", features = ["tray-icon"] }
 tauri-build = { version = "2", features = [] }

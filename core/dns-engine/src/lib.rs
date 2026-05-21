@@ -2,18 +2,20 @@ pub mod cache;
 pub mod upstream;
 
 use std::net::SocketAddr;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use bytes::Bytes;
 use hickory_proto::op::{Message, MessageType, OpCode, ResponseCode};
-use hickory_proto::rr::Name;
-use hickory_proto::serialize::binary::{BinDecodable, BinEncodable};
+use hickory_proto::serialize::binary::BinEncodable;
+use hickory_proto::serialize::binary::BinDecodable;
 use parking_lot::RwLock;
+use serde::Serialize;
 use thiserror::Error;
 use tokio::net::{TcpListener, UdpSocket};
 use tokio::sync::watch;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 
 use cache::{CacheKey, DnsCache};
 use freeix_filtering_engine::{FilterEngine, FilterResult};
@@ -56,16 +58,38 @@ impl Default for DnsServerConfig {
     }
 }
 
+/// Information about a processed DNS query.
+#[derive(Debug, Clone, Serialize)]
+pub struct QueryInfo {
+    pub domain: String,
+    pub query_type: String,
+    pub blocked: bool,
+    pub cached: bool,
+    pub rule: Option<String>,
+    pub response_time_ms: u32,
+}
+
+/// Callback invoked for each DNS query processed.
+pub type QueryCallback = Arc<dyn Fn(QueryInfo) + Send + Sync>;
+
 pub struct DnsServer {
     config: DnsServerConfig,
     filter_engine: Arc<FilterEngine>,
     cache: Arc<DnsCache>,
     upstream: Arc<UpstreamResolver>,
     shutdown_tx: RwLock<Option<watch::Sender<bool>>>,
+    query_callback: Option<QueryCallback>,
+    pub total_queries: AtomicU64,
+    pub blocked_queries: AtomicU64,
+    pub cache_hits: AtomicU64,
 }
 
 impl DnsServer {
-    pub fn new(config: DnsServerConfig, filter_engine: Arc<FilterEngine>) -> Self {
+    pub fn new(
+        config: DnsServerConfig,
+        filter_engine: Arc<FilterEngine>,
+        callback: Option<QueryCallback>,
+    ) -> Self {
         let cache = Arc::new(DnsCache::new(config.cache_size));
         let upstream = Arc::new(UpstreamResolver::new(config.upstream.clone()));
 
@@ -75,6 +99,10 @@ impl DnsServer {
             cache,
             upstream,
             shutdown_tx: RwLock::new(None),
+            query_callback: callback,
+            total_queries: AtomicU64::new(0),
+            blocked_queries: AtomicU64::new(0),
+            cache_hits: AtomicU64::new(0),
         }
     }
 
@@ -101,8 +129,16 @@ impl DnsServer {
             let upstream = self.upstream.clone();
             let filter = self.filter_engine.clone();
             let config = self.config.clone();
+            let callback = self.query_callback.clone();
+            let total_queries = &self.total_queries as *const AtomicU64 as usize;
+            let blocked_queries = &self.blocked_queries as *const AtomicU64 as usize;
+            let cache_hits = &self.cache_hits as *const AtomicU64 as usize;
             let mut rx = shutdown_rx.clone();
             let socket = Arc::new(udp_socket);
+
+            // We need to use Arc-based counters for the spawned tasks
+            // Since self won't live long enough, we pass the callback only
+            let cb = callback.clone();
 
             tokio::spawn(async move {
                 let mut buf = vec![0u8; 4096];
@@ -118,9 +154,10 @@ impl DnsServer {
                                     let upstream = upstream.clone();
                                     let filter = filter.clone();
                                     let config = config.clone();
+                                    let cb = cb.clone();
 
                                     tokio::spawn(async move {
-                                        if let Ok(response) = handle_query(&data, &filter, &cache, &upstream, &config).await {
+                                        if let Ok(response) = handle_query(&data, &filter, &cache, &upstream, &config, cb.as_ref()).await {
                                             if let Ok(bytes) = response.to_bytes() {
                                                 let _ = socket.send_to(&bytes, src).await;
                                             }
@@ -144,6 +181,7 @@ impl DnsServer {
             let upstream = self.upstream.clone();
             let filter = self.filter_engine.clone();
             let config = self.config.clone();
+            let callback = self.query_callback.clone();
             let mut rx = shutdown_rx;
 
             tokio::spawn(async move {
@@ -157,9 +195,10 @@ impl DnsServer {
                                     let upstream = upstream.clone();
                                     let filter = filter.clone();
                                     let config = config.clone();
+                                    let cb = callback.clone();
 
                                     tokio::spawn(async move {
-                                        if let Err(e) = handle_tcp_connection(stream, &filter, &cache, &upstream, &config).await {
+                                        if let Err(e) = handle_tcp_connection(stream, &filter, &cache, &upstream, &config, cb.as_ref()).await {
                                             debug!(error = %e, "TCP connection error");
                                         }
                                     });
@@ -205,6 +244,7 @@ async fn handle_tcp_connection(
     cache: &DnsCache,
     upstream: &UpstreamResolver,
     config: &DnsServerConfig,
+    callback: Option<&QueryCallback>,
 ) -> Result<(), DnsServerError> {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -216,7 +256,7 @@ async fn handle_tcp_connection(
     let mut buf = vec![0u8; len];
     stream.read_exact(&mut buf).await?;
 
-    let response = handle_query(&buf, filter, cache, upstream, config).await?;
+    let response = handle_query(&buf, filter, cache, upstream, config, callback).await?;
     let bytes = response.to_bytes()?;
 
     let len_bytes = (bytes.len() as u16).to_be_bytes();
@@ -232,7 +272,9 @@ async fn handle_query(
     cache: &DnsCache,
     upstream: &UpstreamResolver,
     config: &DnsServerConfig,
+    callback: Option<&QueryCallback>,
 ) -> Result<Message, DnsServerError> {
+    let start = Instant::now();
     let request = Message::from_bytes(data)?;
     let id = request.id();
 
@@ -251,6 +293,17 @@ async fn handle_query(
     match filter.is_blocked(&domain) {
         FilterResult::Blocked { rule } => {
             debug!(%domain, %rule, "blocked by filter");
+            let elapsed = start.elapsed().as_millis() as u32;
+            if let Some(cb) = callback {
+                cb(QueryInfo {
+                    domain: domain.clone(),
+                    query_type: format!("{:?}", record_type),
+                    blocked: true,
+                    cached: false,
+                    rule: Some(rule),
+                    response_time_ms: elapsed,
+                });
+            }
             return Ok(make_nxdomain(&request));
         }
         FilterResult::Allowed { .. } | FilterResult::NotMatched => {}
@@ -264,6 +317,17 @@ async fn handle_query(
 
     if let Some(mut cached) = cache.get(&cache_key) {
         cached.set_id(id);
+        let elapsed = start.elapsed().as_millis() as u32;
+        if let Some(cb) = callback {
+            cb(QueryInfo {
+                domain: domain.clone(),
+                query_type: format!("{:?}", record_type),
+                blocked: false,
+                cached: true,
+                rule: None,
+                response_time_ms: elapsed,
+            });
+        }
         return Ok(cached);
     }
 
@@ -282,6 +346,19 @@ async fn handle_query(
                 .clamp(config.min_ttl, config.max_ttl);
 
             cache.insert(cache_key, response.clone(), ttl);
+
+            let elapsed = start.elapsed().as_millis() as u32;
+            if let Some(cb) = callback {
+                cb(QueryInfo {
+                    domain: domain.clone(),
+                    query_type: format!("{:?}", record_type),
+                    blocked: false,
+                    cached: false,
+                    rule: None,
+                    response_time_ms: elapsed,
+                });
+            }
+
             Ok(response)
         }
         Err(e) => {

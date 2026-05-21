@@ -942,6 +942,7 @@ dependencies = [
 name = "freeix-desktop"
 version = "0.1.0"
 dependencies = [
+ "directories",
  "freeix-blocklists",
  "freeix-config",
  "freeix-dns-engine",
@@ -954,6 +955,7 @@ dependencies = [
  "tauri",
  "tauri-build",
  "tokio",
+ "toml 0.8.23",
  "tracing",
  "tracing-subscriber",
 ]
@@ -969,6 +971,8 @@ dependencies = [
  "hickory-resolver",
  "hickory-server",
  "parking_lot",
+ "reqwest 0.12.28",
+ "serde",
  "thiserror 2.0.18",
  "tokio",
  "tracing",

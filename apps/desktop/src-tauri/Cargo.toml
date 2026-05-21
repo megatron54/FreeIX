@@ -22,3 +22,5 @@ freeix-blocklists = { path = "../../../core/blocklists" }
 freeix-platform = { path = "../../../core/platform" }
 freeix-config = { path = "../../../core/config" }
 freeix-stats = { path = "../../../core/stats" }
+toml = { workspace = true }
+directories = { workspace = true }
