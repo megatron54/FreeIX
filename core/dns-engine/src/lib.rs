@@ -157,15 +157,30 @@ impl DnsServer {
                                     let cb = cb.clone();
 
                                     tokio::spawn(async move {
-                                        if let Ok(response) = handle_query(&data, &filter, &cache, &upstream, &config, cb.as_ref()).await {
-                                            if let Ok(bytes) = response.to_bytes() {
-                                                let _ = socket.send_to(&bytes, src).await;
+                                        match handle_query(&data, &filter, &cache, &upstream, &config, cb.as_ref()).await {
+                                            Ok(response) => {
+                                                match response.to_bytes() {
+                                                    Ok(bytes) => {
+                                                        let _ = socket.send_to(&bytes, src).await;
+                                                    }
+                                                    Err(e) => {
+                                                        tracing::error!(error = %e, "failed to serialize DNS response");
+                                                    }
+                                                }
+                                            }
+                                            Err(e) => {
+                                                tracing::error!(error = %e, "handle_query failed");
                                             }
                                         }
                                     });
                                 }
                                 Err(e) => {
-                                    warn!(error = %e, "UDP recv error");
+                                    // Error 10054 on Windows is an ICMP unreachable from a previous send
+                                    // (common with ICS/WSL). It's not a real error — just retry.
+                                    let is_windows_10054 = e.raw_os_error() == Some(10054);
+                                    if !is_windows_10054 {
+                                        warn!(error = %e, "UDP recv error");
+                                    }
                                 }
                             }
                         }

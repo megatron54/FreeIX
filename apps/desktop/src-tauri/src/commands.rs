@@ -125,7 +125,7 @@ pub async fn toggle_protection(
         let dns_server = Arc::new(DnsServer::new(server_config, state.filter_engine.clone(), Some(callback)));
         dns_server.start().await.map_err(|e| format!("Failed to start DNS server: {}", e))?;
 
-        // Backup current DNS and redirect to our local proxy
+        // Backup current DNS and redirect to our local proxy (elevated)
         match get_dns_manager() {
             Ok(manager) => {
                 match manager.backup_dns().await {
@@ -134,12 +134,10 @@ pub async fn toggle_protection(
                     }
                     Err(e) => tracing::warn!("Failed to backup DNS: {}", e),
                 }
-                if let Err(e) = manager.set_dns(&[config.listen_address.clone()]).await {
-                    tracing::warn!("Failed to set system DNS: {}. App will work but system won't route through it.", e);
-                }
             }
             Err(e) => tracing::warn!("Platform DNS manager unavailable: {}", e),
         }
+        set_system_dns_elevated(&config.listen_address).await;
 
         *state.dns_server.write() = Some(dns_server);
         *state.stats.started_at.write() = Some(Instant::now());
@@ -414,5 +412,122 @@ pub async fn get_autostart() -> Result<bool, String> {
     }
     #[cfg(not(target_os = "windows"))]
     Ok(false)
+}
+
+/// Auto-start protection on app launch (called from setup, not a Tauri command)
+pub async fn auto_start_protection(state: Arc<AppState>, app: tauri::AppHandle) -> Result<(), String> {
+    let config = state.config.read().clone();
+    let provider = state
+        .dns_providers
+        .iter()
+        .find(|p| p.id == config.dns_provider_id)
+        .cloned()
+        .unwrap_or_else(|| state.dns_providers[0].clone());
+
+    let upstream_entries = vec![
+        UpstreamEntry {
+            address: format!("{}:53", provider.primary).parse().map_err(|e| format!("{}", e))?,
+            protocol: UpstreamProtocol::Plain,
+            hostname: None,
+            doh_url: None,
+        },
+        UpstreamEntry {
+            address: format!("{}:53", provider.secondary).parse().map_err(|e| format!("{}", e))?,
+            protocol: UpstreamProtocol::Plain,
+            hostname: None,
+            doh_url: None,
+        },
+    ];
+
+    let upstream_config = UpstreamConfig {
+        providers: vec![UpstreamProvider::Custom(upstream_entries)],
+        timeout: std::time::Duration::from_secs(5),
+        retries: 2,
+    };
+
+    let server_config = DnsServerConfig {
+        listen_addr: format!("{}:{}", config.listen_address, config.port)
+            .parse()
+            .map_err(|e| format!("invalid listen address: {}", e))?,
+        upstream: upstream_config,
+        cache_size: config.cache_size as usize,
+        ..Default::default()
+    };
+
+    // Build query callback
+    let state_ref = state.clone();
+    let app_handle = app.clone();
+    let callback: QueryCallback = Arc::new(move |info: QueryInfo| {
+        state_ref.stats.total_queries.fetch_add(1, Ordering::Relaxed);
+        if info.blocked {
+            state_ref.stats.blocked_queries.fetch_add(1, Ordering::Relaxed);
+        }
+        if info.cached {
+            state_ref.stats.cache_hits.fetch_add(1, Ordering::Relaxed);
+        }
+        let status = if info.blocked {
+            QueryStatus::Blocked
+        } else if info.cached {
+            QueryStatus::Cached
+        } else {
+            QueryStatus::Allowed
+        };
+        let event = QueryEvent {
+            timestamp: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
+            domain: info.domain.clone(),
+            query_type: info.query_type.clone(),
+            status,
+            response_time_ms: info.response_time_ms,
+            upstream: String::new(),
+            rule: info.rule.clone(),
+        };
+        state_ref.push_log(event.clone());
+        let _ = app_handle.emit("query-event", &event);
+    });
+
+    let dns_server = Arc::new(DnsServer::new(server_config, state.filter_engine.clone(), Some(callback)));
+    dns_server.start().await.map_err(|e| format!("Failed to start DNS server: {}", e))?;
+
+    // Set system DNS with elevation
+    set_system_dns_elevated(&config.listen_address).await;
+
+    *state.dns_server.write() = Some(dns_server);
+    *state.stats.started_at.write() = Some(Instant::now());
+    *state.protection_enabled.write() = true;
+
+    tracing::info!(provider = %provider.name, "Auto-start protection enabled");
+    Ok(())
+}
+
+/// Set system DNS using elevated PowerShell (triggers UAC if needed)
+async fn set_system_dns_elevated(address: &str) {
+    #[cfg(target_os = "windows")]
+    {
+        use std::process::Command;
+        // Build a script that sets DNS on all active adapters
+        let script = format!(
+            "Get-NetAdapter | Where-Object {{ $_.Status -eq 'Up' }} | ForEach-Object {{ Set-DnsClientServerAddress -InterfaceIndex $_.ifIndex -ServerAddresses ('{}') }}",
+            address
+        );
+        let result = Command::new("powershell")
+            .args(&["-NoProfile", "-Command", &format!(
+                "Start-Process powershell -ArgumentList '-NoProfile -Command {}' -Verb RunAs -Wait",
+                script.replace("'", "''")
+            )])
+            .output();
+        match result {
+            Ok(output) => {
+                if output.status.success() {
+                    tracing::info!("System DNS set to {} via elevated PowerShell", address);
+                } else {
+                    tracing::warn!("Elevated DNS change may have been cancelled by user");
+                }
+            }
+            Err(e) => tracing::warn!("Failed to launch elevated DNS change: {}", e),
+        }
+    }
 }
 
