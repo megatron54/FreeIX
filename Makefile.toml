@@ -1,0 +1,124 @@
+[config]
+default_to_workspace = false
+
+[env]
+CARGO_MAKE_EXTEND_WORKSPACE_MAKEFILE = true
+
+# ─── Setup ───────────────────────────────────────────────────────────────────
+
+[tasks.setup]
+description = "Install all development dependencies"
+script_runner = "@shell"
+script = """
+echo "Installing Rust components..."
+rustup component add rustfmt clippy
+echo "Installing cargo tools..."
+cargo install cargo-deny --locked
+cargo install tauri-cli --locked
+echo "Installing frontend dependencies..."
+pnpm install
+echo "Setup complete!"
+"""
+
+# ─── Development ─────────────────────────────────────────────────────────────
+
+[tasks.dev]
+description = "Start development server (frontend + Tauri)"
+command = "cargo"
+args = ["tauri", "dev"]
+
+[tasks.dev-frontend]
+description = "Start frontend dev server only"
+command = "pnpm"
+args = ["dev"]
+
+# ─── Build ───────────────────────────────────────────────────────────────────
+
+[tasks.build]
+description = "Build the complete application"
+dependencies = ["build-frontend", "build-backend"]
+
+[tasks.build-frontend]
+description = "Build the frontend"
+command = "pnpm"
+args = ["build"]
+
+[tasks.build-backend]
+description = "Build the Rust backend"
+command = "cargo"
+args = ["build", "--release"]
+cwd = "src-tauri"
+
+[tasks.release]
+description = "Build release bundle for current platform"
+command = "cargo"
+args = ["tauri", "build"]
+
+# ─── Testing ─────────────────────────────────────────────────────────────────
+
+[tasks.test]
+description = "Run all tests"
+dependencies = ["test-backend", "test-frontend"]
+
+[tasks.test-backend]
+description = "Run Rust tests"
+command = "cargo"
+args = ["test", "--workspace"]
+cwd = "src-tauri"
+
+[tasks.test-frontend]
+description = "Run frontend tests"
+command = "pnpm"
+args = ["test"]
+
+[tasks.test-integration]
+description = "Run integration tests"
+command = "cargo"
+args = ["test", "--test", "*", "--", "--nocapture"]
+cwd = "src-tauri"
+
+# ─── Code Quality ────────────────────────────────────────────────────────────
+
+[tasks.fmt]
+description = "Format all Rust code"
+command = "cargo"
+args = ["fmt", "--all"]
+cwd = "src-tauri"
+
+[tasks.fmt-check]
+description = "Check Rust code formatting"
+command = "cargo"
+args = ["fmt", "--all", "--", "--check"]
+cwd = "src-tauri"
+
+[tasks.clippy]
+description = "Run Clippy lints"
+command = "cargo"
+args = ["clippy", "--workspace", "--all-targets", "--", "-D", "warnings"]
+cwd = "src-tauri"
+
+[tasks.lint]
+description = "Run all linters"
+dependencies = ["fmt-check", "clippy"]
+
+[tasks.deny]
+description = "Run cargo-deny checks"
+command = "cargo"
+args = ["deny", "check"]
+cwd = "src-tauri"
+
+# ─── Clean ───────────────────────────────────────────────────────────────────
+
+[tasks.clean]
+description = "Clean all build artifacts"
+script_runner = "@shell"
+script = """
+cargo clean --manifest-path src-tauri/Cargo.toml
+rm -rf dist node_modules/.cache
+"""
+
+# ─── CI ──────────────────────────────────────────────────────────────────────
+
+[tasks.ci]
+description = "Run full CI pipeline locally"
+dependencies = ["fmt-check", "clippy", "test", "deny"]

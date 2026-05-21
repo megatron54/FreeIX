@@ -1,0 +1,52 @@
+# Rust
+/target/
+src-tauri/target/
+**/*.rs.bk
+*.pdb
+
+# Node
+node_modules/
+dist/
+.output/
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Tauri
+src-tauri/WixTools/
+src-tauri/icons/icon.ico.bak
+
+# Build artifacts
+*.exe
+*.msi
+*.dmg
+*.deb
+*.AppImage
+*.rpm
+
+# Logs
+*.log
+logs/
+
+# Coverage
+coverage/
+*.lcov
+
+# Temporary
+tmp/
+temp/
+*.tmp

@@ -1,0 +1,17 @@
+[package]
+name = "freeix-dns-engine"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+tokio = { workspace = true }
+hickory-resolver = { workspace = true }
+hickory-server = { workspace = true }
+hickory-proto = { workspace = true }
+tracing = { workspace = true }
+thiserror = { workspace = true }
+bytes = { workspace = true }
+parking_lot = { workspace = true }
+freeix-filtering-engine = { path = "../filtering-engine" }
+freeix-cache = { path = "../cache" }

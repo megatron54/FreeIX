@@ -1,0 +1,24 @@
+[package]
+name = "freeix-desktop"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[build-dependencies]
+tauri-build = { workspace = true }
+
+[dependencies]
+tauri = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+parking_lot = { workspace = true }
+
+freeix-dns-engine = { path = "../../../core/dns-engine" }
+freeix-filtering-engine = { path = "../../../core/filtering-engine" }
+freeix-blocklists = { path = "../../../core/blocklists" }
+freeix-platform = { path = "../../../core/platform" }
+freeix-config = { path = "../../../core/config" }
+freeix-stats = { path = "../../../core/stats" }
