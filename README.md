@@ -23,9 +23,11 @@ FreeIX is an open-source, privacy-first DNS-based ad blocker for Windows, macOS,
 
 ## Installation
 
-### Pre-built Binary (Windows)
+### Download (Windows)
 
-Download `FreeIX.exe` from the [Releases](https://github.com/megatron54/FreeIX/releases) page and place it anywhere on your system.
+**[Download FreeIX v0.1.0](https://github.com/megatron54/FreeIX/releases/latest/download/FreeIX-Windows-x64.exe)**
+
+Place the `.exe` anywhere on your system and run it. No installer needed.
 
 ### Build from Source
 
