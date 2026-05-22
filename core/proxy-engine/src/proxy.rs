@@ -285,32 +285,21 @@ async fn handle_http(
 
 /// Determine if we should MITM a particular host.
 /// Only intercept domains where URL-level filtering is useful.
-fn should_intercept(host: &str, _filter: &UrlFilter) -> bool {
-    // Intercept known ad-serving domains and YouTube
-    let intercept_domains = [
-        "youtube.com",
-        "www.youtube.com",
-        "m.youtube.com",
-        "googlevideo.com",
-        "doubleclick.net",
-        "googleadservices.com",
-        "googlesyndication.com",
-        "google-analytics.com",
-        "googletagmanager.com",
-        "googletagservices.com",
-        "facebook.com",
-        "facebook.net",
-        "fbcdn.net",
-        "amazon-adsystem.com",
-        "adnxs.com",
-        "adsrvr.org",
-        "scorecardresearch.com",
-        "outbrain.com",
-        "taboola.com",
-    ];
+fn should_intercept(_host: &str, _filter: &UrlFilter) -> bool {
+    // MITM disabled for now — Chrome/Firefox reject forged certs for pinned domains
+    // (Google, Facebook, etc.) even with our CA in the system store.
+    // DNS-level blocking handles domain-based ads. For YouTube video ads,
+    // a browser extension approach is needed.
+    //
+    // TODO: Re-enable for non-pinned ad domains only (adnxs.com, taboola.com, etc.)
+    // once we have a reliable list of domains that don't use HSTS/CT pinning.
+    return false;
+
+    #[allow(unreachable_code)]
+    let intercept_domains: [&str; 0] = [];
 
     for domain in &intercept_domains {
-        if host == *domain || host.ends_with(&format!(".{}", domain)) {
+        if _host == *domain || _host.ends_with(&format!(".{}", domain)) {
             return true;
         }
     }

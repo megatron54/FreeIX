@@ -579,18 +579,20 @@ pub async fn auto_start_protection(state: Arc<AppState>, app: tauri::AppHandle) 
         }
     });
 
-    // Start HTTPS proxy engine for URL-level ad blocking (YouTube, etc.)
-    let proxy = state.proxy_engine.clone();
-    tokio::spawn(async move {
-        if let Err(e) = proxy.start(PROXY_PORT).await {
-            tracing::warn!("Proxy engine failed to start: {}", e);
-        } else {
-            // Enable system proxy redirect
-            if let Err(e) = proxy.enable_wfp_redirect(PROXY_PORT) {
-                tracing::warn!("Failed to enable proxy redirect: {}", e);
-            }
-        }
-    });
+    // HTTPS proxy disabled — MITM doesn't work for cert-pinned domains (Google, Facebook).
+    // DNS blocking handles domain-level ads. YouTube video ads need browser extension approach.
+    // TODO: Re-enable proxy when we have a working non-MITM URL filtering strategy.
+    //
+    // let proxy = state.proxy_engine.clone();
+    // tokio::spawn(async move {
+    //     if let Err(e) = proxy.start(PROXY_PORT).await {
+    //         tracing::warn!("Proxy engine failed to start: {}", e);
+    //     } else {
+    //         if let Err(e) = proxy.enable_wfp_redirect(PROXY_PORT) {
+    //             tracing::warn!("Failed to enable proxy redirect: {}", e);
+    //         }
+    //     }
+    // });
 
     tracing::info!(provider = %provider.name, "Auto-start protection enabled");
     Ok(())
