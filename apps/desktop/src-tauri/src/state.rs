@@ -4,9 +4,11 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
+use freeix_ca::RootCa;
 use freeix_dns_engine::DnsServer;
 use freeix_filtering_engine::FilterEngine;
 use freeix_platform::DnsBackup;
+use freeix_proxy_engine::ProxyEngine;
 use parking_lot::RwLock;
 use tokio::sync::broadcast;
 
@@ -114,6 +116,8 @@ pub struct AppState {
     pub filter_engine: Arc<FilterEngine>,
     pub dns_backup: RwLock<Option<DnsBackup>>,
     pub event_tx: broadcast::Sender<QueryEvent>,
+    pub root_ca: Arc<RootCa>,
+    pub proxy_engine: Arc<ProxyEngine>,
 }
 
 impl AppState {
@@ -234,6 +238,13 @@ impl AppState {
             },
             dns_backup: RwLock::new(None),
             event_tx,
+            root_ca: {
+                let ca = RootCa::load_or_create().expect("Failed to initialize FreeIX CA");
+                Arc::new(ca)
+            },
+            proxy_engine: Arc::new(ProxyEngine::new(
+                Arc::new(RootCa::load_or_create().expect("Failed to initialize proxy CA"))
+            )),
         }
     }
 

@@ -22,5 +22,7 @@ freeix-blocklists = { path = "../../../core/blocklists" }
 freeix-platform = { path = "../../../core/platform" }
 freeix-config = { path = "../../../core/config" }
 freeix-stats = { path = "../../../core/stats" }
+freeix-ca = { path = "../../../core/ca" }
+freeix-proxy-engine = { path = "../../../core/proxy-engine" }
 toml = { workspace = true }
 directories = { workspace = true }

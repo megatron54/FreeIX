@@ -1,0 +1,12 @@
+[package]
+name = "freeix-ca"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+rcgen = { version = "0.13", features = ["x509-parser"] }
+tracing = { workspace = true }
+thiserror = { workspace = true }
+directories = { workspace = true }
+time = "0.3"

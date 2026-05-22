@@ -1,10 +1,12 @@
 use crate::state::{AppConfig, AppState, DnsProvider, QueryEvent, QueryStatus};
 use std::process::Command;
 use freeix_blocklists::BlocklistManager;
+use freeix_ca::RootCa;
 use freeix_dns_engine::upstream::{UpstreamConfig, UpstreamEntry, UpstreamProtocol, UpstreamProvider};
 use freeix_dns_engine::{DnsServer, DnsServerConfig, QueryCallback, QueryInfo};
 use freeix_filtering_engine::{FilterEngine, Rule, RuleType2};
 use freeix_platform::{get_dns_manager, DnsBackup};
+use freeix_proxy_engine::ProxyEngine;
 use serde::Serialize;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
@@ -63,6 +65,19 @@ pub async fn set_system_dns_to_local() -> Result<(), String> {
     set_system_dns_elevated("127.0.0.1");
     Ok(())
 }
+
+#[tauri::command]
+pub async fn install_ca_certificate(state: State<'_, Arc<AppState>>) -> Result<(), String> {
+    state.root_ca.install_to_system().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn is_ca_installed(state: State<'_, Arc<AppState>>) -> Result<bool, String> {
+    Ok(state.root_ca.is_installed())
+}
+
+/// The proxy listens on this port. System proxy is configured to use it.
+const PROXY_PORT: u16 = 8853;
 
 /// Shared blocklist update logic used by both the command and auto-update task.
 pub async fn update_blocklists_inner(state: &AppState) -> Result<usize, String> {
@@ -561,6 +576,19 @@ pub async fn auto_start_protection(state: Arc<AppState>, app: tauri::AppHandle) 
         match update_blocklists_inner(&state_for_blocklists).await {
             Ok(count) => tracing::info!(count, "Blocklists loaded on startup"),
             Err(e) => tracing::warn!("Failed to load blocklists on startup: {}", e),
+        }
+    });
+
+    // Start HTTPS proxy engine for URL-level ad blocking (YouTube, etc.)
+    let proxy = state.proxy_engine.clone();
+    tokio::spawn(async move {
+        if let Err(e) = proxy.start(PROXY_PORT).await {
+            tracing::warn!("Proxy engine failed to start: {}", e);
+        } else {
+            // Enable system proxy redirect
+            if let Err(e) = proxy.enable_wfp_redirect(PROXY_PORT) {
+                tracing::warn!("Failed to enable proxy redirect: {}", e);
+            }
         }
     });
 

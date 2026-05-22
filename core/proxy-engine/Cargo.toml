@@ -1,0 +1,18 @@
+[package]
+name = "freeix-proxy-engine"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+tokio = { workspace = true }
+tokio-rustls = "0.26"
+rustls = "0.23"
+bytes = { workspace = true }
+tracing = { workspace = true }
+thiserror = { workspace = true }
+parking_lot = { workspace = true }
+freeix-ca = { path = "../ca" }
+lru = "0.12"
+regex = { workspace = true }
+webpki-roots = "0.26"

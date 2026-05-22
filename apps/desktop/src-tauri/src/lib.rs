@@ -34,7 +34,13 @@ fn recover_from_crash() {
     if std::path::Path::new(DNS_ACTIVE_FLAG).exists() {
         tracing::warn!("Detected dns-active.flag from previous crash, restoring DNS...");
         restore_dns_on_exit();
+        disable_system_proxy();
     }
+}
+
+/// Disable the system proxy setting.
+fn disable_system_proxy() {
+    let _ = freeix_proxy_engine::wfp::disable_redirect();
 }
 
 pub fn run() {
@@ -85,6 +91,8 @@ pub fn run() {
             is_setup_complete,
             complete_setup,
             set_system_dns_to_local,
+            install_ca_certificate,
+            is_ca_installed,
         ])
         .setup(move |app| {
             tracing::info!("FreeIX initialized successfully");
@@ -129,8 +137,9 @@ pub fn run() {
         .expect("error building FreeIX")
         .run(|_app_handle, event| {
             if let tauri::RunEvent::Exit = event {
-                tracing::info!("FreeIX shutting down, restoring DNS...");
+                tracing::info!("FreeIX shutting down, restoring DNS and proxy...");
                 restore_dns_on_exit();
+                disable_system_proxy();
             }
         });
 }

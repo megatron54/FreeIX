@@ -10,6 +10,8 @@ export default function Setup({ onComplete }: SetupProps) {
   const [autoStart, setAutoStart] = useState(true);
   const [dnsSet, setDnsSet] = useState(false);
   const [settingDns, setSettingDns] = useState(false);
+  const [caInstalled, setCaInstalled] = useState(false);
+  const [installingCa, setInstallingCa] = useState(false);
 
   const steps = [
     // Step 0: Welcome
@@ -19,11 +21,11 @@ export default function Setup({ onComplete }: SetupProps) {
       </div>
       <h1 className="text-3xl font-bold text-white">Welcome to FreeIX</h1>
       <p className="text-zinc-400 max-w-md mx-auto">
-        FreeIX is a local DNS ad blocker that protects your entire device from ads,
-        trackers, and malware at the network level.
+        FreeIX blocks all ads, trackers, and malware across your entire system —
+        including YouTube video ads, banner ads, and tracking scripts.
       </p>
       <p className="text-zinc-500 text-sm max-w-md mx-auto">
-        We need to configure a few things to get started. This will only take a moment.
+        We need to configure a few permissions. This only takes a moment.
       </p>
     </div>,
 
@@ -31,14 +33,14 @@ export default function Setup({ onComplete }: SetupProps) {
     <div className="space-y-6">
       <h2 className="text-2xl font-bold text-white">Set System DNS</h2>
       <p className="text-zinc-400">
-        FreeIX needs to redirect your device's DNS queries to itself (127.0.0.1) so it can
-        filter ads and trackers. This requires administrator permission.
+        FreeIX intercepts DNS queries to block ad domains at the network level.
+        This requires administrator permission to change your DNS settings.
       </p>
       <div className="bg-zinc-800 rounded-lg p-4 space-y-2">
         <p className="text-zinc-300 text-sm font-medium">What this does:</p>
         <ul className="text-zinc-400 text-sm space-y-1 list-disc list-inside">
-          <li>Changes your DNS server to 127.0.0.1 (this computer)</li>
-          <li>FreeIX filters ads then forwards clean queries upstream</li>
+          <li>Redirects DNS queries through FreeIX (127.0.0.1)</li>
+          <li>Blocks thousands of known ad and tracker domains</li>
           <li>Automatically restored when FreeIX exits</li>
         </ul>
       </div>
@@ -64,41 +66,52 @@ export default function Setup({ onComplete }: SetupProps) {
       >
         {dnsSet ? "DNS Configured" : settingDns ? "Waiting for permission..." : "Grant Permission"}
       </button>
-      {dnsSet && (
-        <p className="text-green-400 text-sm text-center">
-          System DNS set to 127.0.0.1 successfully.
-        </p>
-      )}
     </div>,
 
-    // Step 2: Browser Secure DNS
+    // Step 2: Install CA Certificate (for HTTPS ad blocking)
     <div className="space-y-6">
-      <h2 className="text-2xl font-bold text-white">Disable Browser Secure DNS</h2>
+      <h2 className="text-2xl font-bold text-white">Install Security Certificate</h2>
       <p className="text-zinc-400">
-        Most modern browsers use their own encrypted DNS (DoH), which bypasses FreeIX entirely.
-        You need to disable this in each browser for ad blocking to work.
+        To block ads inside encrypted connections (like YouTube video ads),
+        FreeIX needs to install a local security certificate on your system.
       </p>
-      <div className="space-y-4">
-        <div className="bg-zinc-800 rounded-lg p-4">
-          <p className="text-white font-medium mb-2">Chrome / Edge / Brave</p>
-          <ol className="text-zinc-400 text-sm space-y-1 list-decimal list-inside">
-            <li>Open Settings &rarr; Privacy and Security</li>
-            <li>Click "Security"</li>
-            <li>Turn OFF "Use secure DNS"</li>
-          </ol>
-        </div>
-        <div className="bg-zinc-800 rounded-lg p-4">
-          <p className="text-white font-medium mb-2">Firefox</p>
-          <ol className="text-zinc-400 text-sm space-y-1 list-decimal list-inside">
-            <li>Open Settings &rarr; Privacy & Security</li>
-            <li>Scroll to "DNS over HTTPS"</li>
-            <li>Select "Off"</li>
-          </ol>
-        </div>
+      <div className="bg-zinc-800 rounded-lg p-4 space-y-2">
+        <p className="text-zinc-300 text-sm font-medium">What this does:</p>
+        <ul className="text-zinc-400 text-sm space-y-1 list-disc list-inside">
+          <li>Installs a local-only FreeIX root certificate</li>
+          <li>Allows FreeIX to inspect HTTPS ad requests</li>
+          <li>Blocks YouTube ads, tracking scripts, and more</li>
+          <li>Your data never leaves your computer</li>
+        </ul>
       </div>
-      <p className="text-zinc-500 text-xs text-center">
-        You can skip this step, but ads may still appear in browsers with Secure DNS enabled.
-      </p>
+      <div className="bg-amber-900/30 border border-amber-700 rounded-lg p-3">
+        <p className="text-amber-300 text-sm">
+          This certificate is generated locally and unique to your device. 
+          It is never shared with anyone and can be removed at any time.
+        </p>
+      </div>
+      <button
+        onClick={async () => {
+          setInstallingCa(true);
+          try {
+            await invoke("install_ca_certificate");
+            setCaInstalled(true);
+          } catch (e) {
+            console.error("CA install failed:", e);
+          }
+          setInstallingCa(false);
+        }}
+        disabled={installingCa || caInstalled}
+        className={`w-full py-3 rounded-lg font-medium transition ${
+          caInstalled
+            ? "bg-green-600 text-white cursor-default"
+            : installingCa
+            ? "bg-zinc-700 text-zinc-400 cursor-wait"
+            : "bg-teal-500 hover:bg-teal-600 text-white"
+        }`}
+      >
+        {caInstalled ? "Certificate Installed" : installingCa ? "Installing..." : "Install Certificate"}
+      </button>
     </div>,
 
     // Step 3: Auto-start
@@ -128,12 +141,13 @@ export default function Setup({ onComplete }: SetupProps) {
       </div>
       <h2 className="text-2xl font-bold text-white">You're All Set!</h2>
       <p className="text-zinc-400 max-w-md mx-auto">
-        FreeIX is now protecting your device. Ads, trackers, and malware domains
-        will be blocked at the DNS level.
+        FreeIX is now blocking ads, trackers, and malware across your entire system —
+        including YouTube video ads.
       </p>
-      {!dnsSet && (
+      {!caInstalled && (
         <p className="text-amber-400 text-sm">
-          Note: You skipped the DNS setup. You can configure it later in Settings.
+          Note: You skipped the certificate installation. YouTube ads may still appear.
+          You can install it later in Settings.
         </p>
       )}
     </div>,
@@ -176,7 +190,6 @@ export default function Setup({ onComplete }: SetupProps) {
           <button
             onClick={async () => {
               if (isLast) {
-                // Save preferences and complete
                 try {
                   await invoke("update_config", {
                     config: { auto_start: autoStart },

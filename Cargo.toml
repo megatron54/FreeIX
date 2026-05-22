@@ -8,6 +8,8 @@ members = [
     "core/platform",
     "core/config",
     "core/stats",
+    "core/ca",
+    "core/proxy-engine",
     "apps/desktop/src-tauri",
 ]
 
@@ -27,6 +29,21 @@ hickory-proto = "0.24"
 # Networking
 reqwest = { version = "0.12", features = ["rustls-tls"], default-features = false }
 bytes = "1"
+
+# TLS / Crypto
+rustls = "0.23"
+tokio-rustls = "0.26"
+rustls-pemfile = "2"
+rcgen = { version = "0.13", features = ["x509-parser"] }
+webpki-roots = "0.26"
+
+# HTTP
+hyper = { version = "1", features = ["http1", "http2", "server", "client"] }
+hyper-util = { version = "0.1", features = ["tokio", "http1", "http2"] }
+http-body-util = "0.1"
+
+# Cache
+lru = "0.12"
 
 # Serialization
 serde = { version = "1", features = ["derive"] }
