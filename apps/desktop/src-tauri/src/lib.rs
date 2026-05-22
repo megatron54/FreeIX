@@ -14,12 +14,18 @@ const DNS_ACTIVE_FLAG: &str = "C:\\FreeIX\\dns-active.flag";
 /// Restore DNS settings to system defaults (resets all active adapters).
 fn restore_dns_on_exit() {
     tracing::info!("Restoring DNS settings...");
-    let _ = std::process::Command::new("powershell")
-        .args(&[
-            "-NoProfile", "-Command",
-            "Start-Process powershell -ArgumentList '-NoProfile -Command Get-NetAdapter | Where-Object { $_.Status -eq ''Up'' } | ForEach-Object { Set-DnsClientServerAddress -InterfaceIndex $_.ifIndex -ResetServerAddresses }' -Verb RunAs -Wait"
-        ])
-        .output();
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        let _ = std::process::Command::new("powershell")
+            .args(&[
+                "-NoProfile", "-WindowStyle", "Hidden", "-Command",
+                "Start-Process powershell -ArgumentList '-NoProfile -WindowStyle Hidden -Command Get-NetAdapter | Where-Object { $_.Status -eq ''Up'' } | ForEach-Object { Set-DnsClientServerAddress -InterfaceIndex $_.ifIndex -ResetServerAddresses }' -Verb RunAs -Wait -WindowStyle Hidden"
+            ])
+            .creation_flags(CREATE_NO_WINDOW)
+            .output();
+    }
     let _ = std::fs::remove_file(DNS_ACTIVE_FLAG);
 }
 

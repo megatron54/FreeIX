@@ -196,7 +196,42 @@ impl AppState {
             query_log: RwLock::new(Vec::with_capacity(10000)),
             dns_providers,
             dns_server: RwLock::new(None),
-            filter_engine: Arc::new(FilterEngine::new()),
+            filter_engine: {
+                let engine = Arc::new(FilterEngine::new());
+                // Block known browser DoH endpoints to force browsers to use system DNS
+                // This prevents Chrome/Edge/Firefox from bypassing our DNS filter
+                let doh_domains = [
+                    "dns.google",
+                    "dns.google.com",
+                    "8888.google",
+                    "dns64.dns.google",
+                    "chrome.cloudflare-dns.com",
+                    "cloudflare-dns.com",
+                    "one.one.one.one",
+                    "1dot1dot1dot1.cloudflare-dns.com",
+                    "mozilla.cloudflare-dns.com",
+                    "firefox.dns.nextdns.io",
+                    "dns.nextdns.io",
+                    "anycast.dns.nextdns.io",
+                    "dns.quad9.net",
+                    "dns9.quad9.net",
+                    "dns10.quad9.net",
+                    "dns11.quad9.net",
+                    "doh.opendns.com",
+                    "doh.familyshield.opendns.com",
+                    "dns.adguard-dns.com",
+                    "dns-unfiltered.adguard.com",
+                    "dns-family.adguard.com",
+                    "doh.cleanbrowsing.org",
+                ];
+                for domain in &doh_domains {
+                    engine.add_rule(freeix_filtering_engine::Rule {
+                        pattern: domain.to_string(),
+                        rule_type: freeix_filtering_engine::RuleType2::Block,
+                    });
+                }
+                engine
+            },
             dns_backup: RwLock::new(None),
             event_tx,
         }

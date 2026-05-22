@@ -208,6 +208,15 @@ pub async fn toggle_protection(
         *state.stats.started_at.write() = Some(Instant::now());
         *state.protection_enabled.write() = true;
 
+        // Load blocklists immediately
+        let state_for_bl = state.inner().clone();
+        tokio::spawn(async move {
+            match update_blocklists_inner(&state_for_bl).await {
+                Ok(count) => tracing::info!(count, "Blocklists loaded"),
+                Err(e) => tracing::warn!("Failed to load blocklists: {}", e),
+            }
+        });
+
         tracing::info!(provider = %provider.name, "Protection enabled");
     } else {
         // Stop DNS server and restore system DNS
@@ -546,6 +555,15 @@ pub async fn auto_start_protection(state: Arc<AppState>, app: tauri::AppHandle) 
     *state.stats.started_at.write() = Some(Instant::now());
     *state.protection_enabled.write() = true;
 
+    // Load blocklists immediately so blocking works from the start
+    let state_for_blocklists = state.clone();
+    tokio::spawn(async move {
+        match update_blocklists_inner(&state_for_blocklists).await {
+            Ok(count) => tracing::info!(count, "Blocklists loaded on startup"),
+            Err(e) => tracing::warn!("Failed to load blocklists on startup: {}", e),
+        }
+    });
+
     tracing::info!(provider = %provider.name, "Auto-start protection enabled");
     Ok(())
 }
@@ -554,17 +572,21 @@ pub async fn auto_start_protection(state: Arc<AppState>, app: tauri::AppHandle) 
 fn set_system_dns_elevated(address: &str) {
     #[cfg(target_os = "windows")]
     {
+        use std::os::windows::process::CommandExt;
         use std::process::Command;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+
         // Build a script that sets DNS on all active adapters
         let script = format!(
             "Get-NetAdapter | Where-Object {{ $_.Status -eq 'Up' }} | ForEach-Object {{ Set-DnsClientServerAddress -InterfaceIndex $_.ifIndex -ServerAddresses ('{}') }}",
             address
         );
         let result = Command::new("powershell")
-            .args(&["-NoProfile", "-Command", &format!(
-                "Start-Process powershell -ArgumentList '-NoProfile -Command {}' -Verb RunAs -Wait",
+            .args(&["-NoProfile", "-WindowStyle", "Hidden", "-Command", &format!(
+                "Start-Process powershell -ArgumentList '-NoProfile -WindowStyle Hidden -Command {}' -Verb RunAs -Wait -WindowStyle Hidden",
                 script.replace("'", "''")
             )])
+            .creation_flags(CREATE_NO_WINDOW)
             .output();
         match result {
             Ok(output) => {
