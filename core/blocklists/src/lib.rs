@@ -91,6 +91,25 @@ pub fn default_blocklists() -> Vec<BlocklistSource> {
         BlocklistSource::oisd_big(),
         BlocklistSource::easyprivacy(),
         BlocklistSource::adguard_dns(),
+        // Additional high-coverage lists
+        BlocklistSource {
+            name: "Peter Lowe's Ad/Tracking".into(),
+            url: "https://pgl.yoyo.org/adservers/serverlist.php?hostformat=nohtml&showintro=0&mimetype=plaintext".into(),
+            format: BlocklistFormat::DomainList,
+            enabled: true,
+        },
+        BlocklistSource {
+            name: "URLhaus Malware".into(),
+            url: "https://malware-filter.gitlab.io/malware-filter/urlhaus-filter-hosts.txt".into(),
+            format: BlocklistFormat::Hosts,
+            enabled: true,
+        },
+        BlocklistSource {
+            name: "Hagezi Pro++".into(),
+            url: "https://cdn.jsdelivr.net/gh/hagezi/dns-blocklists@latest/domains/pro.plus.txt".into(),
+            format: BlocklistFormat::DomainList,
+            enabled: true,
+        },
     ]
 }
 
@@ -148,6 +167,27 @@ impl BlocklistManager {
         };
 
         Ok(parse_blocklist(&response, &format))
+    }
+
+    /// Fetch a blocklist URL and parse with explicit format.
+    pub async fn fetch_and_parse_with_format(&self, url: &str, format: &BlocklistFormat) -> Result<Vec<String>, BlocklistError> {
+        let response = self
+            .client
+            .get(url)
+            .send()
+            .await
+            .map_err(|e| BlocklistError::Download {
+                url: url.to_string(),
+                source: e,
+            })?
+            .text()
+            .await
+            .map_err(|e| BlocklistError::Download {
+                url: url.to_string(),
+                source: e,
+            })?;
+
+        Ok(parse_blocklist(&response, format))
     }
 
     pub fn add_source(&mut self, source: BlocklistSource) {

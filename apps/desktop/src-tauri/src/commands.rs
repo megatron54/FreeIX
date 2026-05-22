@@ -86,14 +86,15 @@ pub async fn update_blocklists_inner(state: &AppState) -> Result<usize, String> 
 
     let mut total_rules = 0;
     for list in &default_lists {
-        match manager.fetch_and_parse(&list.url).await {
+        match manager.fetch_and_parse_with_format(&list.url, &list.format).await {
             Ok(domains) => {
                 let count = domains.len();
-                for domain in domains {
-                    state.filter_engine.add_rule(Rule {
-                        pattern: domain,
-                        rule_type: RuleType2::Block,
-                    });
+                // Batch-load all domains at once (O(n) instead of O(n^2) per-rule insert)
+                match state.filter_engine.add_rules(domains.iter().map(|d| d.as_str())) {
+                    Ok(_) => {}
+                    Err(e) => {
+                        tracing::warn!(list = %list.name, error = %e, "failed to parse blocklist rules");
+                    }
                 }
                 total_rules += count;
                 tracing::info!(list = %list.name, count, "loaded blocklist");

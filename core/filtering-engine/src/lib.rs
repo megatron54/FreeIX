@@ -46,8 +46,8 @@ pub enum RuleType2 {
 struct FilterState {
     exact_blocks: HashSet<String>,
     exact_allows: HashSet<String>,
-    wildcard_blocks: Vec<String>,
-    wildcard_allows: Vec<String>,
+    wildcard_blocks: HashSet<String>,
+    wildcard_allows: HashSet<String>,
     regex_blocks: Option<RegexSet>,
     regex_patterns: Vec<String>,
 }
@@ -62,8 +62,8 @@ impl FilterEngine {
             state: RwLock::new(Arc::new(FilterState {
                 exact_blocks: HashSet::new(),
                 exact_allows: HashSet::new(),
-                wildcard_blocks: Vec::new(),
-                wildcard_allows: Vec::new(),
+                wildcard_blocks: HashSet::new(),
+                wildcard_allows: HashSet::new(),
                 regex_blocks: None,
                 regex_patterns: Vec::new(),
             })),
@@ -84,8 +84,8 @@ impl FilterEngine {
     {
         let mut exact_blocks = HashSet::new();
         let mut exact_allows = HashSet::new();
-        let mut wildcard_blocks = Vec::new();
-        let mut wildcard_allows = Vec::new();
+        let mut wildcard_blocks = HashSet::new();
+        let mut wildcard_allows = HashSet::new();
         let mut regex_patterns = Vec::new();
         let mut count = 0;
 
@@ -98,10 +98,10 @@ impl FilterEngine {
             let parsed = Self::parse_rule(rule)?;
             match parsed {
                 RuleType::ExactBlock(d) => { exact_blocks.insert(d); }
-                RuleType::WildcardBlock(d) => { wildcard_blocks.push(d); }
+                RuleType::WildcardBlock(d) => { wildcard_blocks.insert(d); }
                 RuleType::RegexBlock(p) => { regex_patterns.push(p); }
                 RuleType::ExactAllow(d) => { exact_allows.insert(d); }
-                RuleType::WildcardAllow(d) => { wildcard_allows.push(d); }
+                RuleType::WildcardAllow(d) => { wildcard_allows.insert(d); }
             }
             count += 1;
         }
@@ -150,10 +150,10 @@ impl FilterEngine {
             let parsed = Self::parse_rule(rule)?;
             match parsed {
                 RuleType::ExactBlock(d) => { exact_blocks.insert(d); }
-                RuleType::WildcardBlock(d) => { wildcard_blocks.push(d); }
+                RuleType::WildcardBlock(d) => { wildcard_blocks.insert(d); }
                 RuleType::RegexBlock(p) => { regex_patterns.push(p); }
                 RuleType::ExactAllow(d) => { exact_allows.insert(d); }
-                RuleType::WildcardAllow(d) => { wildcard_allows.push(d); }
+                RuleType::WildcardAllow(d) => { wildcard_allows.insert(d); }
             }
             count += 1;
         }
@@ -190,12 +190,19 @@ impl FilterEngine {
             };
         }
 
-        // Check wildcard allow
-        for pattern in &state.wildcard_allows {
-            if domain_matches_wildcard(&domain, pattern) {
-                return FilterResult::Allowed {
-                    rule: format!("@@*.{}", pattern),
-                };
+        // Check wildcard allow (O(labels) lookup via parent domain decomposition)
+        {
+            let mut d = domain.as_str();
+            loop {
+                if state.wildcard_allows.contains(d) {
+                    return FilterResult::Allowed {
+                        rule: format!("@@*.{}", d),
+                    };
+                }
+                match d.find('.') {
+                    Some(idx) => d = &d[idx + 1..],
+                    None => break,
+                }
             }
         }
 
@@ -206,12 +213,19 @@ impl FilterEngine {
             };
         }
 
-        // Check wildcard block
-        for pattern in &state.wildcard_blocks {
-            if domain_matches_wildcard(&domain, pattern) {
-                return FilterResult::Blocked {
-                    rule: format!("*.{}", pattern),
-                };
+        // Check wildcard block (O(labels) lookup via parent domain decomposition)
+        {
+            let mut d = domain.as_str();
+            loop {
+                if state.wildcard_blocks.contains(d) {
+                    return FilterResult::Blocked {
+                        rule: format!("*.{}", d),
+                    };
+                }
+                match d.find('.') {
+                    Some(idx) => d = &d[idx + 1..],
+                    None => break,
+                }
             }
         }
 
@@ -240,8 +254,8 @@ impl FilterEngine {
         *self.state.write() = Arc::new(FilterState {
             exact_blocks: HashSet::new(),
             exact_allows: HashSet::new(),
-            wildcard_blocks: Vec::new(),
-            wildcard_allows: Vec::new(),
+            wildcard_blocks: HashSet::new(),
+            wildcard_allows: HashSet::new(),
             regex_blocks: None,
             regex_patterns: Vec::new(),
         });
@@ -336,11 +350,6 @@ impl Default for FilterEngine {
     }
 }
 
-/// Check if domain matches a wildcard pattern.
-/// Pattern "example.com" matches "sub.example.com", "a.b.example.com", etc.
-fn domain_matches_wildcard(domain: &str, pattern: &str) -> bool {
-    domain == pattern || domain.ends_with(&format!(".{}", pattern))
-}
 
 #[cfg(test)]
 mod tests {
