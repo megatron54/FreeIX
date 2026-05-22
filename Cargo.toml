@@ -10,6 +10,7 @@ members = [
     "core/stats",
     "core/ca",
     "core/proxy-engine",
+    "core/packet-filter",
     "apps/desktop/src-tauri",
 ]
 

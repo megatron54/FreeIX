@@ -1,0 +1,11 @@
+[package]
+name = "freeix-packet-filter"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+tokio = { workspace = true }
+tracing = { workspace = true }
+thiserror = { workspace = true }
+parking_lot = { workspace = true }
+libloading = "0.8"

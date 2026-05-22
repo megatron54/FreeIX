@@ -1,0 +1,46 @@
+{
+  "manifest_version": 3,
+  "name": "FreeIX Ad Blocker",
+  "version": "1.0.0",
+  "description": "Blocks YouTube ads and web ads via network request filtering",
+  "permissions": [
+    "declarativeNetRequest",
+    "declarativeNetRequestFeedback"
+  ],
+  "host_permissions": [
+    "*://*.youtube.com/*",
+    "*://*.googlevideo.com/*",
+    "*://*.doubleclick.net/*",
+    "*://*.googlesyndication.com/*",
+    "*://*.googleadservices.com/*",
+    "*://*.google-analytics.com/*",
+    "*://*.googletagmanager.com/*",
+    "*://*.facebook.net/*",
+    "*://*.amazon-adsystem.com/*",
+    "*://*.adnxs.com/*",
+    "*://*.outbrain.com/*",
+    "*://*.taboola.com/*",
+    "*://*.scorecardresearch.com/*"
+  ],
+  "declarative_net_request": {
+    "rule_resources": [
+      {
+        "id": "adblock_rules",
+        "enabled": true,
+        "path": "rules.json"
+      }
+    ]
+  },
+  "content_scripts": [
+    {
+      "matches": ["*://*.youtube.com/*"],
+      "js": ["youtube.js"],
+      "run_at": "document_start",
+      "all_frames": true
+    }
+  ],
+  "icons": {
+    "48": "icon48.png",
+    "128": "icon128.png"
+  }
+}

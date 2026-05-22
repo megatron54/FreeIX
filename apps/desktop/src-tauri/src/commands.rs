@@ -571,29 +571,44 @@ pub async fn auto_start_protection(state: Arc<AppState>, app: tauri::AppHandle) 
     *state.stats.started_at.write() = Some(Instant::now());
     *state.protection_enabled.write() = true;
 
-    // Load blocklists immediately so blocking works from the start
+    // Load blocklists FIRST (before WinDivert, since downloads need network access)
     let state_for_blocklists = state.clone();
+    let state_for_pf = state.clone();
     tokio::spawn(async move {
         match update_blocklists_inner(&state_for_blocklists).await {
             Ok(count) => tracing::info!(count, "Blocklists loaded on startup"),
             Err(e) => tracing::warn!("Failed to load blocklists on startup: {}", e),
         }
-    });
 
-    // HTTPS proxy disabled — MITM doesn't work for cert-pinned domains (Google, Facebook).
-    // DNS blocking handles domain-level ads. YouTube video ads need browser extension approach.
-    // TODO: Re-enable proxy when we have a working non-MITM URL filtering strategy.
-    //
-    // let proxy = state.proxy_engine.clone();
-    // tokio::spawn(async move {
-    //     if let Err(e) = proxy.start(PROXY_PORT).await {
-    //         tracing::warn!("Proxy engine failed to start: {}", e);
-    //     } else {
-    //         if let Err(e) = proxy.enable_wfp_redirect(PROXY_PORT) {
-    //             tracing::warn!("Failed to enable proxy redirect: {}", e);
-    //         }
-    //     }
-    // });
+        // Now start WinDivert packet filter AFTER blocklists are downloaded
+        let blocklist = &state_for_pf.packet_blocklist;
+        let ad_domains = vec![
+            "doubleclick.net", "googlesyndication.com", "googleadservices.com",
+            "google-analytics.com", "googletagmanager.com", "googletagservices.com",
+            "facebook.net", "fbcdn.net", "amazon-adsystem.com", "adnxs.com",
+            "adsrvr.org", "outbrain.com", "taboola.com", "scorecardresearch.com",
+            "criteo.com", "criteo.net", "moatads.com", "serving-sys.com",
+            "pubmatic.com", "rubiconproject.com", "openx.net", "casalemedia.com",
+            "advertising.com", "contextweb.com", "yieldmanager.com",
+            "quantserve.com", "quantcount.com", "imrworldwide.com",
+            "adsafeprotected.com", "cdn.adsafeprotected.com",
+            "static.adsafeprotected.com", "pagead2.googlesyndication.com",
+            "tpc.googlesyndication.com", "securepubads.g.doubleclick.net",
+            "adservice.google.com", "pagead.l.doubleclick.net",
+        ];
+        blocklist.add_domains(ad_domains);
+
+        let mut pf = freeix_packet_filter::PacketFilter::new(state_for_pf.packet_blocklist.clone());
+        match pf.start() {
+            Ok(_) => {
+                tracing::info!("WinDivert packet filter started");
+                *state_for_pf.packet_filter.write() = Some(pf);
+            }
+            Err(e) => {
+                tracing::warn!("Packet filter failed to start (need admin + WinDivert.dll): {}", e);
+            }
+        }
+    });
 
     tracing::info!(provider = %provider.name, "Auto-start protection enabled");
     Ok(())

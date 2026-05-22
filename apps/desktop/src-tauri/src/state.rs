@@ -8,6 +8,7 @@ use freeix_ca::RootCa;
 use freeix_dns_engine::DnsServer;
 use freeix_filtering_engine::FilterEngine;
 use freeix_platform::DnsBackup;
+use freeix_packet_filter::{PacketBlocklist, PacketFilter};
 use freeix_proxy_engine::ProxyEngine;
 use parking_lot::RwLock;
 use tokio::sync::broadcast;
@@ -118,6 +119,8 @@ pub struct AppState {
     pub event_tx: broadcast::Sender<QueryEvent>,
     pub root_ca: Arc<RootCa>,
     pub proxy_engine: Arc<ProxyEngine>,
+    pub packet_blocklist: PacketBlocklist,
+    pub packet_filter: RwLock<Option<PacketFilter>>,
 }
 
 impl AppState {
@@ -245,6 +248,8 @@ impl AppState {
             proxy_engine: Arc::new(ProxyEngine::new(
                 Arc::new(RootCa::load_or_create().expect("Failed to initialize proxy CA"))
             )),
+            packet_blocklist: PacketBlocklist::new(),
+            packet_filter: RwLock::new(None),
         }
     }
 
