@@ -6,8 +6,10 @@ export default function Dashboard() {
   const [stats, setStats] = useState<StatsResponse | null>(null);
   const [logs, setLogs] = useState<QueryEvent[]>([]);
   const [toggling, setToggling] = useState(false);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    let firstPoll = true;
     const poll = async () => {
       try {
         const [s, st, l] = await Promise.all([
@@ -18,6 +20,10 @@ export default function Dashboard() {
         setStatus(s);
         setStats(st);
         setLogs(l);
+        if (firstPoll) {
+          firstPoll = false;
+          setLoading(false);
+        }
       } catch (e) {
         console.error("poll error", e);
       }
@@ -58,24 +64,35 @@ export default function Dashboard() {
             FreeIX
           </h1>
           <p className="text-sm text-gray-500 dark:text-gray-400">
-            {status?.enabled ? "Protection Active" : "Protection Disabled"}
+            {loading
+              ? "Starting protection..."
+              : status?.enabled
+                ? "Protection Active"
+                : "Protection Disabled"}
           </p>
         </div>
-        <button
-          onClick={handleToggle}
-          disabled={toggling}
-          className={`relative w-20 h-20 rounded-full border-4 transition-all duration-300 flex items-center justify-center ${
-            status?.enabled
-              ? "border-green-500 bg-green-500/10 shadow-lg shadow-green-500/20"
-              : "border-gray-400 bg-gray-100 dark:bg-gray-800"
-          } ${toggling ? "opacity-50" : "hover:scale-105"}`}
-        >
-          <div
-            className={`w-4 h-4 rounded-full ${
-              status?.enabled ? "bg-green-500 animate-pulse" : "bg-gray-400"
-            }`}
-          />
-        </button>
+        {loading ? (
+          <div className="relative w-20 h-20 rounded-full border-4 border-blue-400 bg-blue-500/10 flex items-center justify-center">
+            <div className="w-4 h-4 rounded-full bg-blue-400 animate-pulse" />
+            <span className="absolute -bottom-6 text-xs text-blue-500 font-medium">Starting...</span>
+          </div>
+        ) : (
+          <button
+            onClick={handleToggle}
+            disabled={toggling}
+            className={`relative w-20 h-20 rounded-full border-4 transition-all duration-300 flex items-center justify-center ${
+              status?.enabled
+                ? "border-green-500 bg-green-500/10 shadow-lg shadow-green-500/20"
+                : "border-gray-400 bg-gray-100 dark:bg-gray-800"
+            } ${toggling ? "opacity-50" : "hover:scale-105"}`}
+          >
+            <div
+              className={`w-4 h-4 rounded-full ${
+                status?.enabled ? "bg-green-500 animate-pulse" : "bg-gray-400"
+              }`}
+            />
+          </button>
+        )}
       </div>
 
       {/* Stats Cards */}

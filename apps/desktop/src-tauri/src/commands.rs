@@ -34,6 +34,46 @@ pub struct TopBlocked {
     pub count: u64,
 }
 
+/// Check if port 53 is available for binding
+fn check_port_available(addr: &str, port: u16) -> Result<(), String> {
+    let bind_addr: std::net::SocketAddr = format!("{}:{}", addr, port).parse()
+        .map_err(|e| format!("invalid address: {}", e))?;
+
+    match std::net::UdpSocket::bind(bind_addr) {
+        Ok(_) => Ok(()), // Socket bound successfully, port is free
+        Err(e) => Err(format!("Port {} is already in use: {}. Another DNS service (ICS, Docker, or another DNS proxy) may be running.", port, e)),
+    }
+}
+
+/// Shared blocklist update logic used by both the command and auto-update task.
+pub async fn update_blocklists_inner(state: &AppState) -> Result<usize, String> {
+    let manager = BlocklistManager::new();
+    let default_lists = freeix_blocklists::default_blocklists();
+
+    let mut total_rules = 0;
+    for list in &default_lists {
+        match manager.fetch_and_parse(&list.url).await {
+            Ok(domains) => {
+                let count = domains.len();
+                for domain in domains {
+                    state.filter_engine.add_rule(Rule {
+                        pattern: domain,
+                        rule_type: RuleType2::Block,
+                    });
+                }
+                total_rules += count;
+                tracing::info!(list = %list.name, count, "loaded blocklist");
+            }
+            Err(e) => {
+                tracing::warn!(list = %list.name, error = %e, "failed to load blocklist");
+            }
+        }
+    }
+
+    tracing::info!("Loaded {} blocking rules from {} lists", total_rules, default_lists.len());
+    Ok(total_rules)
+}
+
 type AppStateHandle = Arc<AppState>;
 
 #[tauri::command]
@@ -123,6 +163,12 @@ pub async fn toggle_protection(
         });
 
         let dns_server = Arc::new(DnsServer::new(server_config, state.filter_engine.clone(), Some(callback)));
+
+        // Check if port is available (warn but still try — on Windows, 127.0.0.1:53 can coexist with 0.0.0.0:53 from ICS)
+        if let Err(e) = check_port_available(&config.listen_address, config.port) {
+            tracing::warn!("{}", e);
+        }
+
         dns_server.start().await.map_err(|e| format!("Failed to start DNS server: {}", e))?;
 
         // Backup current DNS and redirect to our local proxy (elevated)
@@ -333,32 +379,9 @@ pub async fn get_top_blocked(
 #[tauri::command]
 pub async fn update_blocklists(state: State<'_, AppStateHandle>) -> Result<String, String> {
     tracing::info!("Updating blocklists...");
-
-    let manager = BlocklistManager::new();
+    let count = update_blocklists_inner(&state).await?;
     let default_lists = freeix_blocklists::default_blocklists();
-
-    let mut total_rules = 0;
-    for list in &default_lists {
-        match manager.fetch_and_parse(&list.url).await {
-            Ok(domains) => {
-                let count = domains.len();
-                for domain in domains {
-                    state.filter_engine.add_rule(Rule {
-                        pattern: domain,
-                        rule_type: RuleType2::Block,
-                    });
-                }
-                total_rules += count;
-                tracing::info!(list = %list.name, count, "loaded blocklist");
-            }
-            Err(e) => {
-                tracing::warn!(list = %list.name, error = %e, "failed to load blocklist");
-            }
-        }
-    }
-
-    let msg = format!("Loaded {} blocking rules from {} lists", total_rules, default_lists.len());
-    tracing::info!("{}", msg);
+    let msg = format!("Loaded {} blocking rules from {} lists", count, default_lists.len());
     Ok(msg)
 }
 
@@ -489,6 +512,12 @@ pub async fn auto_start_protection(state: Arc<AppState>, app: tauri::AppHandle) 
     });
 
     let dns_server = Arc::new(DnsServer::new(server_config, state.filter_engine.clone(), Some(callback)));
+
+    // Check if port is available (warn but still try — on Windows, 127.0.0.1:53 can coexist with 0.0.0.0:53 from ICS)
+    if let Err(e) = check_port_available(&config.listen_address, config.port) {
+        tracing::warn!("{}", e);
+    }
+
     dns_server.start().await.map_err(|e| format!("Failed to start DNS server: {}", e))?;
 
     // Set system DNS with elevation

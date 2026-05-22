@@ -1,16 +1,25 @@
 import { useEffect, useState } from "react";
-import { api, AppConfig, DnsProvider } from "../lib/api";
+import { api, AppConfig, DnsProvider, ProtectionStatus } from "../lib/api";
 
 export default function Settings() {
   const [config, setConfig] = useState<AppConfig | null>(null);
   const [providers, setProviders] = useState<DnsProvider[]>([]);
+  const [status, setStatus] = useState<ProtectionStatus | null>(null);
   const [saving, setSaving] = useState(false);
+  const [updating, setUpdating] = useState(false);
+  const [updateMsg, setUpdateMsg] = useState("");
+  const [autoUpdateInterval, setAutoUpdateInterval] = useState("24h");
 
   useEffect(() => {
     (async () => {
-      const [c, p] = await Promise.all([api.getConfig(), api.getDnsProviders()]);
+      const [c, p, s] = await Promise.all([
+        api.getConfig(),
+        api.getDnsProviders(),
+        api.getStatus(),
+      ]);
       setConfig(c);
       setProviders(p);
+      setStatus(s);
     })();
   }, []);
 
@@ -29,6 +38,18 @@ export default function Settings() {
     setConfig((prev) => (prev ? { ...prev, dns_provider_id: id } : null));
   };
 
+  const handleUpdateBlocklists = async () => {
+    setUpdating(true);
+    setUpdateMsg("");
+    try {
+      const msg = await api.updateBlocklists();
+      setUpdateMsg(msg);
+    } catch (e) {
+      setUpdateMsg(`Error: ${e}`);
+    }
+    setUpdating(false);
+  };
+
   if (!config) {
     return (
       <div className="flex items-center justify-center h-full">
@@ -37,8 +58,10 @@ export default function Settings() {
     );
   }
 
+  const protectionActive = status?.enabled ?? false;
+
   return (
-    <div className="p-6 space-y-6 max-w-2xl">
+    <div className="space-y-6 max-w-2xl">
       <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
         Settings
       </h1>
@@ -91,7 +114,7 @@ export default function Settings() {
               Auto-start
             </p>
             <p className="text-xs text-gray-500 dark:text-gray-400">
-              Launch FreeIX on system startup
+              Enable DNS protection automatically on launch
             </p>
           </div>
           <button
@@ -134,6 +157,48 @@ export default function Settings() {
             />
           </button>
         </div>
+      </section>
+
+      {/* Network Settings */}
+      <section className="bg-white dark:bg-gray-800 rounded-xl p-5 shadow-sm border border-gray-200 dark:border-gray-700 space-y-4">
+        <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
+          Network
+        </h2>
+        {protectionActive && (
+          <p className="text-xs text-yellow-600 dark:text-yellow-400">
+            Disable protection to change network settings.
+          </p>
+        )}
+
+        <div>
+          <label className="block font-medium text-gray-900 dark:text-white mb-1">
+            Listen Address
+          </label>
+          <input
+            type="text"
+            value={config.listen_address}
+            disabled={protectionActive}
+            onChange={(e) =>
+              setConfig({ ...config, listen_address: e.target.value })
+            }
+            className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none disabled:opacity-50 disabled:cursor-not-allowed"
+          />
+        </div>
+
+        <div>
+          <label className="block font-medium text-gray-900 dark:text-white mb-1">
+            Port
+          </label>
+          <input
+            type="number"
+            value={config.port}
+            disabled={protectionActive}
+            onChange={(e) =>
+              setConfig({ ...config, port: parseInt(e.target.value) || 53 })
+            }
+            className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none disabled:opacity-50 disabled:cursor-not-allowed"
+          />
+        </div>
 
         <div>
           <label className="block font-medium text-gray-900 dark:text-white mb-1">
@@ -150,6 +215,50 @@ export default function Settings() {
           <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
             Number of DNS entries to cache
           </p>
+        </div>
+      </section>
+
+      {/* Blocklist Management */}
+      <section className="bg-white dark:bg-gray-800 rounded-xl p-5 shadow-sm border border-gray-200 dark:border-gray-700 space-y-4">
+        <div className="flex items-center justify-between">
+          <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
+            Blocklists
+          </h2>
+          <button
+            onClick={handleUpdateBlocklists}
+            disabled={updating}
+            className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700 disabled:opacity-50"
+          >
+            {updating ? "Updating..." : "Update Now"}
+          </button>
+        </div>
+
+        {updateMsg && (
+          <div className="p-3 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg text-sm text-green-700 dark:text-green-300">
+            {updateMsg}
+          </div>
+        )}
+
+        {status && (
+          <p className="text-sm text-gray-600 dark:text-gray-300">
+            {status.total_rules.toLocaleString()} blocking rules loaded
+          </p>
+        )}
+
+        <div>
+          <label className="block font-medium text-gray-900 dark:text-white mb-1">
+            Auto-update Interval
+          </label>
+          <select
+            value={autoUpdateInterval}
+            onChange={(e) => setAutoUpdateInterval(e.target.value)}
+            className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none"
+          >
+            <option value="off">Off</option>
+            <option value="12h">Every 12 hours</option>
+            <option value="24h">Every 24 hours</option>
+            <option value="48h">Every 48 hours</option>
+          </select>
         </div>
       </section>
 

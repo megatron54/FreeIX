@@ -9,6 +9,28 @@ mod state;
 use commands::*;
 use state::AppState;
 
+const DNS_ACTIVE_FLAG: &str = "C:\\FreeIX\\dns-active.flag";
+
+/// Restore DNS settings to system defaults (resets all active adapters).
+fn restore_dns_on_exit() {
+    tracing::info!("Restoring DNS settings...");
+    let _ = std::process::Command::new("powershell")
+        .args(&[
+            "-NoProfile", "-Command",
+            "Start-Process powershell -ArgumentList '-NoProfile -Command Get-NetAdapter | Where-Object { $_.Status -eq ''Up'' } | ForEach-Object { Set-DnsClientServerAddress -InterfaceIndex $_.ifIndex -ResetServerAddresses }' -Verb RunAs -Wait"
+        ])
+        .output();
+    let _ = std::fs::remove_file(DNS_ACTIVE_FLAG);
+}
+
+/// If a previous session crashed while DNS was redirected, restore it now.
+fn recover_from_crash() {
+    if std::path::Path::new(DNS_ACTIVE_FLAG).exists() {
+        tracing::warn!("Detected dns-active.flag from previous crash, restoring DNS...");
+        restore_dns_on_exit();
+    }
+}
+
 pub fn run() {
     // Log to file at C:\FreeIX\freeix.log
     let log_path = std::path::PathBuf::from("C:\\FreeIX\\freeix.log");
@@ -21,13 +43,17 @@ pub fn run() {
     tracing_subscriber::registry()
         .with(
             EnvFilter::from_default_env()
-                .add_directive("freeix=debug".parse().unwrap())
-                .add_directive("info".parse().unwrap()),
+                .add_directive("freeix=info".parse().unwrap())
+                .add_directive("freeix_dns_engine=info".parse().unwrap())
+                .add_directive("warn".parse().unwrap()),
         )
         .with(fmt::layer().with_writer(std::sync::Mutex::new(file)).with_ansi(false))
         .init();
 
     tracing::info!("FreeIX Desktop starting");
+
+    // Recover DNS if previous session crashed while protection was active
+    recover_from_crash();
 
     let app_state = Arc::new(AppState::new());
 
@@ -68,8 +94,34 @@ pub fn run() {
                 });
             }
 
+            // Spawn blocklist auto-update task (every 24 hours)
+            let state_for_update = app_state.clone();
+            tauri::async_runtime::spawn(async move {
+                // Wait 5 minutes before first update (let app stabilize)
+                tokio::time::sleep(std::time::Duration::from_secs(300)).await;
+                loop {
+                    tracing::info!("Auto-updating blocklists...");
+                    match commands::update_blocklists_inner(&state_for_update).await {
+                        Ok(count) => tracing::info!(count, "Blocklists auto-updated"),
+                        Err(e) => tracing::warn!("Blocklist auto-update failed: {}", e),
+                    }
+                    // Sleep 24 hours
+                    tokio::time::sleep(std::time::Duration::from_secs(86400)).await;
+                }
+            });
+
+            // Write flag file indicating DNS is being managed
+            let _ = std::fs::create_dir_all("C:\\FreeIX");
+            let _ = std::fs::write(DNS_ACTIVE_FLAG, "127.0.0.1");
+
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running FreeIX");
+        .build(tauri::generate_context!())
+        .expect("error building FreeIX")
+        .run(|_app_handle, event| {
+            if let tauri::RunEvent::Exit = event {
+                tracing::info!("FreeIX shutting down, restoring DNS...");
+                restore_dns_on_exit();
+            }
+        });
 }

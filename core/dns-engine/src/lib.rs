@@ -15,7 +15,7 @@ use serde::Serialize;
 use thiserror::Error;
 use tokio::net::{TcpListener, UdpSocket};
 use tokio::sync::watch;
-use tracing::{debug, info, warn};
+use tracing::{info, trace, warn};
 
 use cache::{CacheKey, DnsCache};
 use freeix_filtering_engine::{FilterEngine, FilterResult};
@@ -214,7 +214,7 @@ impl DnsServer {
 
                                     tokio::spawn(async move {
                                         if let Err(e) = handle_tcp_connection(stream, &filter, &cache, &upstream, &config, cb.as_ref()).await {
-                                            debug!(error = %e, "TCP connection error");
+                                            trace!(error = %e, "TCP connection error");
                                         }
                                     });
                                 }
@@ -302,12 +302,19 @@ async fn handle_query(
     let domain = query.name().to_string().trim_end_matches('.').to_lowercase();
     let record_type = query.query_type();
 
-    debug!(%domain, ?record_type, "incoming query");
+    trace!(%domain, ?record_type, "incoming query");
+
+    // NOTE: Windows DNS client appends search suffixes (e.g., .home, .local, .lan) to queries
+    // before sending them. For example, a lookup for "google.com" may first be sent as
+    // "google.com.home". These suffixed queries will pass through the filter (not blocked) and
+    // get forwarded upstream where they receive NXDOMAIN. This is expected behavior — the cache
+    // will store the NXDOMAIN response so subsequent identical queries are fast, and the Windows
+    // DNS client will automatically retry without the suffix.
 
     // Check filter engine
     match filter.is_blocked(&domain) {
         FilterResult::Blocked { rule } => {
-            debug!(%domain, %rule, "blocked by filter");
+            info!(%domain, %rule, "blocked by filter");
             let elapsed = start.elapsed().as_millis() as u32;
             if let Some(cb) = callback {
                 cb(QueryInfo {
@@ -319,7 +326,7 @@ async fn handle_query(
                     response_time_ms: elapsed,
                 });
             }
-            return Ok(make_nxdomain(&request));
+            return Ok(make_blocked_response(&request));
         }
         FilterResult::Allowed { .. } | FilterResult::NotMatched => {}
     }
@@ -381,6 +388,62 @@ async fn handle_query(
             Ok(make_servfail(&request))
         }
     }
+}
+
+// NOTE on in-flight deduplication: Windows DNS client typically sends A + AAAA +
+// search-suffix variants simultaneously. These are technically different queries
+// (different record types or names), so they are not true duplicates. The cache with
+// min_ttl=60s already deduplicates repeated identical queries after the first resolution.
+// True in-flight coalescing (merging concurrent identical queries before the first
+// resolves) would require a shared broadcast map keyed by (domain, qtype). This is not
+// implemented yet because the performance impact is negligible for a local resolver.
+
+/// Returns a well-formed response for blocked domains.
+/// - A queries get 0.0.0.0
+/// - AAAA queries get ::
+/// - Other types get an empty NOERROR (no answers)
+///
+/// This avoids NXDOMAIN which can trigger retry/search-suffix behavior in clients.
+fn make_blocked_response(request: &Message) -> Message {
+    use hickory_proto::rr::{DNSClass, RData, Record, RecordType};
+
+    let mut response = Message::new();
+    response.set_id(request.id());
+    response.set_message_type(MessageType::Response);
+    response.set_op_code(OpCode::Query);
+    response.set_response_code(ResponseCode::NoError);
+    response.set_recursion_desired(true);
+    response.set_recursion_available(true);
+    response.add_queries(request.queries().to_vec());
+
+    if let Some(query) = request.queries().first() {
+        let name = query.name().clone();
+        match query.query_type() {
+            RecordType::A => {
+                let mut record = Record::from_rdata(
+                    name,
+                    300,
+                    RData::A(std::net::Ipv4Addr::UNSPECIFIED.into()),
+                );
+                record.set_dns_class(DNSClass::IN);
+                response.add_answer(record);
+            }
+            RecordType::AAAA => {
+                let mut record = Record::from_rdata(
+                    name,
+                    300,
+                    RData::AAAA(std::net::Ipv6Addr::UNSPECIFIED.into()),
+                );
+                record.set_dns_class(DNSClass::IN);
+                response.add_answer(record);
+            }
+            _ => {
+                // For other record types, return empty NOERROR
+            }
+        }
+    }
+
+    response
 }
 
 fn make_nxdomain(request: &Message) -> Message {
