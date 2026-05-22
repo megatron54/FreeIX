@@ -76,6 +76,9 @@ pub fn run() {
             get_logs,
             get_top_blocked,
             update_blocklists,
+            is_setup_complete,
+            complete_setup,
+            set_system_dns_to_local,
         ])
         .setup(move |app| {
             tracing::info!("FreeIX initialized successfully");

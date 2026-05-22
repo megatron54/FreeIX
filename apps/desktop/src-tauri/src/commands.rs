@@ -1,5 +1,5 @@
 use crate::state::{AppConfig, AppState, DnsProvider, QueryEvent, QueryStatus};
-use std::process::Command as StdCommand;
+use std::process::Command;
 use freeix_blocklists::BlocklistManager;
 use freeix_dns_engine::upstream::{UpstreamConfig, UpstreamEntry, UpstreamProtocol, UpstreamProvider};
 use freeix_dns_engine::{DnsServer, DnsServerConfig, QueryCallback, QueryInfo};
@@ -43,6 +43,25 @@ fn check_port_available(addr: &str, port: u16) -> Result<(), String> {
         Ok(_) => Ok(()), // Socket bound successfully, port is free
         Err(e) => Err(format!("Port {} is already in use: {}. Another DNS service (ICS, Docker, or another DNS proxy) may be running.", port, e)),
     }
+}
+
+#[tauri::command]
+pub async fn is_setup_complete(state: State<'_, Arc<AppState>>) -> Result<bool, String> {
+    Ok(state.config.read().setup_complete)
+}
+
+#[tauri::command]
+pub async fn complete_setup(state: State<'_, Arc<AppState>>) -> Result<(), String> {
+    let mut config = state.config.write();
+    config.setup_complete = true;
+    AppState::save_config(&config);
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn set_system_dns_to_local() -> Result<(), String> {
+    set_system_dns_elevated("127.0.0.1");
+    Ok(())
 }
 
 /// Shared blocklist update logic used by both the command and auto-update task.
@@ -183,7 +202,7 @@ pub async fn toggle_protection(
             }
             Err(e) => tracing::warn!("Platform DNS manager unavailable: {}", e),
         }
-        set_system_dns_elevated(&config.listen_address).await;
+        set_system_dns_elevated(&config.listen_address);
 
         *state.dns_server.write() = Some(dns_server);
         *state.stats.started_at.write() = Some(Instant::now());
@@ -521,7 +540,7 @@ pub async fn auto_start_protection(state: Arc<AppState>, app: tauri::AppHandle) 
     dns_server.start().await.map_err(|e| format!("Failed to start DNS server: {}", e))?;
 
     // Set system DNS with elevation
-    set_system_dns_elevated(&config.listen_address).await;
+    set_system_dns_elevated(&config.listen_address);
 
     *state.dns_server.write() = Some(dns_server);
     *state.stats.started_at.write() = Some(Instant::now());
@@ -532,7 +551,7 @@ pub async fn auto_start_protection(state: Arc<AppState>, app: tauri::AppHandle) 
 }
 
 /// Set system DNS using elevated PowerShell (triggers UAC if needed)
-async fn set_system_dns_elevated(address: &str) {
+fn set_system_dns_elevated(address: &str) {
     #[cfg(target_os = "windows")]
     {
         use std::process::Command;

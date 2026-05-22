@@ -2,7 +2,7 @@ pub mod cache;
 pub mod upstream;
 
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -130,9 +130,9 @@ impl DnsServer {
             let filter = self.filter_engine.clone();
             let config = self.config.clone();
             let callback = self.query_callback.clone();
-            let total_queries = &self.total_queries as *const AtomicU64 as usize;
-            let blocked_queries = &self.blocked_queries as *const AtomicU64 as usize;
-            let cache_hits = &self.cache_hits as *const AtomicU64 as usize;
+            let _total_queries = &self.total_queries as *const AtomicU64 as usize;
+            let _blocked_queries = &self.blocked_queries as *const AtomicU64 as usize;
+            let _cache_hits = &self.cache_hits as *const AtomicU64 as usize;
             let mut rx = shutdown_rx.clone();
             let socket = Arc::new(udp_socket);
 

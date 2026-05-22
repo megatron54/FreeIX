@@ -48,6 +48,8 @@ pub struct AppConfig {
     pub cache_size: u32,
     pub listen_address: String,
     pub port: u16,
+    #[serde(default)]
+    pub setup_complete: bool,
 }
 
 impl Default for AppConfig {
@@ -59,6 +61,7 @@ impl Default for AppConfig {
             cache_size: 10000,
             listen_address: "127.0.0.1".to_string(),
             port: 53,
+            setup_complete: false,
         }
     }
 }
