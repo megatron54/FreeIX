@@ -12,19 +12,46 @@ use state::AppState;
 const DNS_ACTIVE_FLAG: &str = "C:\\FreeIX\\dns-active.flag";
 
 /// Restore DNS settings to system defaults (resets all active adapters).
+/// This runs WITHOUT elevation — uses netsh which works for the current user's adapters.
+/// Falls back to elevated PowerShell if needed.
 fn restore_dns_on_exit() {
     tracing::info!("Restoring DNS settings...");
     #[cfg(target_os = "windows")]
     {
         use std::os::windows::process::CommandExt;
         const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+        // Method 1: Try netsh (doesn't require UAC in many configurations)
+        let result = std::process::Command::new("netsh")
+            .args(&["interface", "ip", "set", "dns", "name=Wi-Fi", "source=dhcp"])
+            .creation_flags(CREATE_NO_WINDOW)
+            .output();
+
+        let _ = std::process::Command::new("netsh")
+            .args(&["interface", "ip", "set", "dns", "name=Ethernet", "source=dhcp"])
+            .creation_flags(CREATE_NO_WINDOW)
+            .output();
+
+        // Method 2: Elevated PowerShell (non-interactive, won't block if UAC fails)
         let _ = std::process::Command::new("powershell")
             .args(&[
                 "-NoProfile", "-WindowStyle", "Hidden", "-Command",
-                "Start-Process powershell -ArgumentList '-NoProfile -WindowStyle Hidden -Command Get-NetAdapter | Where-Object { $_.Status -eq ''Up'' } | ForEach-Object { Set-DnsClientServerAddress -InterfaceIndex $_.ifIndex -ResetServerAddresses }' -Verb RunAs -Wait -WindowStyle Hidden"
+                "Get-NetAdapter | Where-Object { $_.Status -eq 'Up' } | ForEach-Object { Set-DnsClientServerAddress -InterfaceIndex $_.ifIndex -ResetServerAddresses }"
             ])
             .creation_flags(CREATE_NO_WINDOW)
             .output();
+
+        // If all else fails, at least try to set a known-good DNS
+        if result.is_err() {
+            let _ = std::process::Command::new("netsh")
+                .args(&["interface", "ip", "set", "dns", "name=Wi-Fi", "static", "8.8.8.8"])
+                .creation_flags(CREATE_NO_WINDOW)
+                .output();
+            let _ = std::process::Command::new("netsh")
+                .args(&["interface", "ip", "set", "dns", "name=Ethernet", "static", "8.8.8.8"])
+                .creation_flags(CREATE_NO_WINDOW)
+                .output();
+        }
     }
     let _ = std::fs::remove_file(DNS_ACTIVE_FLAG);
 }
@@ -102,11 +129,20 @@ pub fn run() {
             if config.auto_start {
                 let state = app_state.clone();
                 let app_handle = app.handle().clone();
+
+                // Write flag ONLY when we actually start DNS protection
+                let _ = std::fs::create_dir_all("C:\\FreeIX");
+                let _ = std::fs::write(DNS_ACTIVE_FLAG, "127.0.0.1");
+
                 tauri::async_runtime::spawn(async move {
                     tracing::info!("Auto-starting DNS protection...");
                     match commands::auto_start_protection(state, app_handle).await {
                         Ok(_) => tracing::info!("Auto-start protection enabled"),
-                        Err(e) => tracing::warn!("Auto-start protection failed: {}", e),
+                        Err(e) => {
+                            tracing::warn!("Auto-start protection failed: {}", e);
+                            // If auto-start fails, restore DNS immediately
+                            restore_dns_on_exit();
+                        }
                     }
                 });
             }
@@ -126,10 +162,6 @@ pub fn run() {
                     tokio::time::sleep(std::time::Duration::from_secs(86400)).await;
                 }
             });
-
-            // Write flag file indicating DNS is being managed
-            let _ = std::fs::create_dir_all("C:\\FreeIX");
-            let _ = std::fs::write(DNS_ACTIVE_FLAG, "127.0.0.1");
 
             Ok(())
         })

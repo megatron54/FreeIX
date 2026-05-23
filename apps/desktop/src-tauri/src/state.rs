@@ -59,7 +59,7 @@ impl Default for AppConfig {
     fn default() -> Self {
         Self {
             dns_provider_id: "adguard".to_string(),
-            auto_start: true,
+            auto_start: false,
             dark_mode: true,
             cache_size: 10000,
             listen_address: "127.0.0.1".to_string(),
